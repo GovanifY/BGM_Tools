@@ -1,5 +1,4 @@
-﻿/* This is a very early MIDI to BGM converter. There is still a lot unknown. */
-//I remember having fucked up something here, but don't have the time to fix it for now.
+/* This is a very early MIDI to BGM converter. There is still a lot unknown. */
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,19 +15,22 @@ namespace MIDI2BGM
             writer.Write(i);
         }
 
-        public static void WriteDelta(int i, BinaryWriter writer)
+        public static void WriteDelta(float i, BinaryWriter writer)
         {
-            if (i > 0xFFFFFFF)
-            {
-                throw new Exception("Delta is too long!");
-
-            }
+            //Welp, never know(?)
+            if ((i % 1) != 0) { i = (int)Math.Round((double)i, MidpointRounding.AwayFromZero);  }
+           // Console.WriteLine("delta_rounded: {0}", i);
+            while (i > 0xFFFFFFF) { WriteDummy(0xFFFFFFF, writer); i -= 0xFFFFFFF; }
+            //Console.WriteLine("delta_rounded_2: {0}", i);
             UInt32 b = ((UInt32)i & 0x7F);
-            while (Convert.ToBoolean(i >>= 7))
+            //Console.WriteLine("delta_rounded_3: {0}", b);
+            int tmp = (int)i;
+            while (Convert.ToBoolean(tmp >>= 7))
             {
                 b <<= 8;
-                b |= ((uint)(i & 0x7F) | 0x80);
+                b |= (uint)((tmp & 0x7F) | 0x80);
             }
+           // Console.WriteLine("delta_rounded_4: {0}", b);
             do
             {
                 writer.Write((byte)b);
@@ -44,12 +46,11 @@ namespace MIDI2BGM
         {
             if (i == 0)
             {
-                WriteDelta(i, writer);
-                byte[] buffer1 = {
-                    0xff, 6, 0
-                };
-                WriteBytes(buffer1, writer);
+                return;
             }
+                WriteDelta(i, writer);
+                byte[] buffer1 = {0x5d, 0};
+                WriteBytes(buffer1, writer);
         }
 
         static void Main(string[] args)
@@ -80,7 +81,7 @@ namespace MIDI2BGM
             byte trackC;
             ushort ppqn;
             long ActualPos;
-            int delta;
+            float delta;
             int deltaMod = 1;
             FileStream midS = File.Open(nme, FileMode.Open, FileAccess.Read);
             BinaryReader mid = new BinaryReader(midS);
@@ -91,7 +92,7 @@ namespace MIDI2BGM
             byte track = 0;
             byte channel = 0;
             byte[] command;
-            byte[] towrite;
+            byte[] towrite = new byte[0];
             byte SubCommand;
             long trackLenOffset;
             UInt16 temp;
@@ -198,14 +199,15 @@ namespace MIDI2BGM
 
                     for (ActualPos += midS.Position; midS.Position < ActualPos - 1;)
                     {
-
+                        
                         do
                         {
                             byte tmptbyte;
                             t = tmptbyte = mid.ReadByte();
-                            delta = (delta << 7) + (tmptbyte & 0x7f);
-                        } while ((t & 0x80) != 0);
+                            delta = ((int)delta << 7) + (tmptbyte & 0x7f);
+                        } while (Convert.ToBoolean(t & 0x80));
                         delta /= deltaMod;
+                      //Console.WriteLine("delta: {0}", delta);
 
                         /*if(track>2){//skip track
 	            				midS.Position=tSzT;
@@ -219,13 +221,12 @@ namespace MIDI2BGM
 				            }*/
 
                         cmd = mid.ReadByte();
-
                         //Console.WriteLine("Current command: {0:x2}",cmd);
 
                         if (cmd == 0xFF)
                         {
                             command = new byte[] { mid.ReadByte(), mid.ReadByte() };
-                            Console.WriteLine("Current command: {0:x2} {1:x2} {2:x2}", cmd, command[0], command[1]);
+                           // Console.WriteLine("Current command: {0:x2} {1:x2} {2:x2}", cmd, command[0], command[1]);
                             switch (command[0])
                             {
                                 case 0x2F:
@@ -302,6 +303,7 @@ namespace MIDI2BGM
                                 default:
                                     midS.Position += command[1];
                                     Console.WriteLine("Unknown command1: 0x{0:x2} 0x{1:x2}", cmd, command[0]);
+                                    towrite = new byte[0];
                                     break;
 
                             }
@@ -312,6 +314,7 @@ namespace MIDI2BGM
                             {
                                 cmd = mid.ReadByte();
                                 SubCommand = mid.ReadByte();
+                              //  Console.WriteLine("Current command: {0:x2} {1:x2}", cmd, SubCommand);
                                 switch (cmd)
                                 {
                                     case 7:
@@ -350,6 +353,7 @@ namespace MIDI2BGM
                             }
                             else
                             {
+                             //   Console.WriteLine("Current command: {0:x2}", cmd);
                                 if ((cmd & 0xC0) == 0xC0)
                                 {
                                     WriteDelta(delta, bgm);
@@ -373,7 +377,8 @@ namespace MIDI2BGM
                                             }
                                             else
                                             {
-                                                towrite = new byte[] { 0x13, lVelocity = command[1] };
+                                                lVelocity = command[1];
+                                                towrite = new byte[] { 0x13, lVelocity };
                                                 WriteBytes(towrite, bgm);
                                             }
                                         }
@@ -395,32 +400,43 @@ namespace MIDI2BGM
                                         }
 
                                     }
-                                    if ((cmd & 0x80) == 0x80)
-                                    {
-                                        command = new byte[] { mid.ReadByte(), mid.ReadByte() };
-                                        WriteDelta(delta, bgm);
-                                        delta = 0;
-                                        if (command[0] == lKey)
-                                        {
-                                            towrite = new byte[] { 0x18 };
-                                            WriteBytes(towrite, bgm);
-                                        }
-                                        else
-                                        {
-                                            lKey = command[0];
-                                            towrite = new byte[] { 0x1A, lKey };
-                                            WriteBytes(towrite, bgm);
-                                        }
-                                    }
                                     else
                                     {
-                                        Console.WriteLine("Unknown command3: 0x{0:x2}", cmd);
+                                        if ((cmd & 0x80) == 0x80)
+                                        {
+                                            command = new byte[] { mid.ReadByte(), mid.ReadByte() };
+                                            WriteDelta(delta, bgm);
+                                            delta = 0;
+                                            //Console.WriteLine("wtf: {0:x2}, {1:x2}", command[0], lKey);
+                                            if (command[0] == lKey)
+                                            {
+                                                towrite = new byte[] { 0x18 };
+                                                WriteBytes(towrite, bgm);
+                                            }
+                                            else
+                                            {
+                                                lKey = command[0];
+                                                towrite = new byte[] { 0x1A, lKey };
+                                                WriteBytes(towrite, bgm);
+                                            }
+                                        }
+                                        else { Console.WriteLine("Unknown command3: 0x{0:x2}", cmd); }
                                     }
                                 }
 
 
                             }
                         }
+                      /*  Console.Write("{0}: [ ", (bgm.BaseStream.Position - towrite.Length).ToString("X"));
+                        int y = 0;
+                        foreach (var item in towrite)
+                        {
+
+                            if (y > 0) { Console.Write(", "); }
+                            Console.Write(item.ToString("X"));
+                            y++;
+                        }
+                        Console.WriteLine("]");*/
                     }
 
                     if (midS.Position != ActualPos)
